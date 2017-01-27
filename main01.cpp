@@ -38,18 +38,81 @@ string fill_zeros(int num, int num_zeros)
 	return ret;
 }
 
-void preprocess(Mat image, Mat &row_data, bool debugP = false, int c=0, string n_folder="") {
-    Mat gray, vect;
+void preprocess(Mat img, Mat &row_data, bool debugP = false, int c=0, string n_folder="", Mat mask=Mat(), Mat color=Mat()) {
+    Mat image, gray, vect, hist, hsv;
     Mat binary, binary1, result, resized;
     vector<vector<Point> > contours;
     vector<Vec4i> hierarchy;
-    threshold(image, binary1, 130, 255, THRESH_BINARY);
-    resize(binary1, resized, Size(new_size,new_size));
-//    binary = binary1.clone();
-    /*if(c==69) {
-        debugP=true;
+    int histSize = 2, black_dots = 0;
+    float ratio_bw;
+    int channels[] = {2};
+
+    /*cvtColor(color, hsv, CV_BGR2HSV);
+    calcHist(&hsv, 1, channels, Mat(), hist, 1, &histSize, 0);
+    ratio_bw = hist.at<float>(0)/hist.at<float>(1);
+    if(mask.data){
+        if (ratio_bw < 1.5 && ratio_bw > 0.02) {
+            image = Mat(img.size(),CV_8U, 255);
+            img.copyTo(image,mask);
+            threshold(image, binary1, 0, 255, THRESH_BINARY | THRESH_OTSU);
+        }
+        else {
+            img.copyTo(image,mask);
+            threshold(image, binary1, 0, 255, THRESH_BINARY_INV | THRESH_OTSU);
+        }
+    }
+    else {*/
+        image = img;
+        threshold(image, binary1, 0, 255, THRESH_BINARY | THRESH_OTSU);
+    //}
+
+    resize(binary1, resized, Size(new_size,new_size), 0, 0, INTER_NEAREST);
+
+    for(int i=0; i<new_size; i++){
+        if(resized.at<uchar>(0,i) == 0){
+            black_dots++;
+        }
+        if(resized.at<uchar>(1,i) == 0){
+            black_dots++;
+        }
+    }
+    for(int i=2; i<new_size; i++){
+        if(resized.at<uchar>(i,0) == 0){
+            black_dots++;
+        }
+        if(resized.at<uchar>(i,1) == 0){
+            black_dots++;
+        }
+        if(resized.at<uchar>(new_size-1,i) == 0){
+            black_dots++;
+        }
+        if(resized.at<uchar>(new_size-2,i) == 0){
+            black_dots++;
+        }
+    }
+    for(int i=2; i<new_size-2; i++){
+        if(resized.at<uchar>(i,new_size-1) == 0){
+            black_dots++;
+        }
+        if(resized.at<uchar>(i,new_size-2) == 0){
+            black_dots++;
+        }
+    }
+    if (black_dots > ((new_size*8)-12)/2.5){
+        threshold(resized, result, 140, 255, THRESH_BINARY_INV);
+    }
+    else {
+        result = resized;
+    }
+
+    /*if(c%20==0) {
+        cout<<ratio_bw<<" - "<<black_dots<<endl;
+        imshow("source", img);
         imshow("image", image);
-        imshow("binary", binary);
+        imshow("binary1", binary1);
+        imshow("mask", mask);
+        imshow("resized", resized);
+        imshow("final", result);
         waitKey();
     }*/
     /*findContours(binary1, contours, hierarchy, CV_RETR_TREE, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
@@ -92,7 +155,7 @@ void preprocess(Mat image, Mat &row_data, bool debugP = false, int c=0, string n
         imshow( "image resized and normalized", resized );
         waitKey();
     }*/
-    resized.convertTo(vect, CV_32F);
+    result.convertTo(vect, CV_32F);
     row_data = vect.reshape(1,1);
     /*for (int i=0; i<row_data.cols; i++){
         if(row_data.at<float>(i) < 80){
@@ -116,18 +179,24 @@ void preprocess(Mat image, Mat &row_data, bool debugP = false, int c=0, string n
 }
 
 int read_folder(string folder, vector<Mat> &data, string n_folder) {
-    string name;
-    Mat image, row_data;
+    string name, folder_masks;
+    Mat image, row_data, mask;
     DIR *dir;
     struct dirent *ent;
     int c = 0;
     if ((dir = opendir(folder.c_str())) != NULL) {
+        if(n_folder.substr(0, 3)=="img"){
+            folder_masks = folder;
+            folder_masks.replace(folder_masks.find("Img"), 3, "Msk");
+        }
         while ((ent = readdir(dir)) != NULL) {
             name = ent->d_name;
             if (name.find(".png")!=string::npos){
                 image = imread(folder+name, IMREAD_GRAYSCALE);
+                Mat image2 = imread(folder+name);
+                mask = imread(folder_masks+name, IMREAD_GRAYSCALE);
                 if(image.data) {
-                    preprocess(image, row_data, false, c, n_folder);
+                    preprocess(image, row_data, false, c, n_folder, mask, image2);
                     data.push_back(row_data);
                     c++;
                 }
@@ -220,16 +289,16 @@ Ptr<ml::SVM> trainSVM(Mat X, Mat Y) {
     Ptr<ml::SVM> svm = ml::SVM::create();
     svm->setType(ml::SVM::C_SVC);
     svm->setKernel(ml::SVM::LINEAR);
+    svm->setC(0.08);
 //    svm->setGamma(5.4);
-//    svm->setC(2.6);
     svm->setTermCriteria(TermCriteria(TermCriteria::MAX_ITER, 100, 1e-6));
     Ptr<ml::TrainData> td = ml::TrainData::create(X, ml::ROW_SAMPLE, Y);
-//    svm->train(td);
-    ml::ParamGrid gridC(0,20,0.001);
-    ml::ParamGrid gridGamma(0,20,0.001);
-    svm->trainAuto(td, 5, gridC, gridGamma);
-    cout<<to_string(svm->getGamma())<<endl;
+    svm->train(td);
+//    ml::ParamGrid gridC(1e-5,50,5);
+//    ml::ParamGrid gridGamma(1e-5,100,5);
+//    svm->trainAuto(td, 5);
     cout<<to_string(svm->getC())<<endl;
+    cout<<to_string(svm->getGamma())<<endl;
     svm->save("svm.yml");
     return svm;
 }
@@ -267,7 +336,7 @@ string get_label(int n) {
 
 void predictSVM(Ptr<ml::SVM> model, Mat X, Mat Y) {
 //    cout<<Y.rows<<endl;
-    for(int i = 0; i < 9000 && i < Y.rows; i+=50) {
+    for(int i = 0; i < 9000 && i < Y.rows; i+=30) {
         Mat res;
         Mat sample = X.row(i);
         model->predict(sample, res);
