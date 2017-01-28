@@ -83,6 +83,16 @@ void preprocess(Mat image, Mat &row_data, bool debugP = false, int c=0) {
         result = resized;
     }
 
+    /*if(c%20==0){
+        namedWindow("source", WINDOW_NORMAL);
+        namedWindow("resized", WINDOW_NORMAL);
+        namedWindow("result", WINDOW_NORMAL);
+        imshow("source", image);
+        imshow("resized", resized);
+        imshow("result", result);
+        waitKey();
+    }*/
+
     result.convertTo(vect, CV_32F);
     row_data = vect.reshape(1,1);
     divide(row_data, 255, row_data);
@@ -188,26 +198,40 @@ void read_data(string path, Mat &trainX, Mat &testX, Mat &trainY, Mat &testY, in
     testY = testClasses;
 }
 
-Ptr<ml::SVM> trainSVM(Mat X, Mat Y) {
+Ptr<ml::SVM> trainSVM(Mat X, Mat Y, bool save=false) {
     Y.convertTo(Y,CV_32S);
     Ptr<ml::SVM> svm = ml::SVM::create();
     svm->setType(ml::SVM::C_SVC);
     svm->setKernel(ml::SVM::LINEAR);
 //    svm->setC(0.08);
+    svm->setC(0.1);
 //    svm->setC(2.6);
 //    svm->setGamma(5.4);
 //    svm->setC(12.5);
 //    svm->setGamma(0.00225);
-    svm->setTermCriteria(TermCriteria(TermCriteria::MAX_ITER, 1e5, 1e-6));
+    svm->setTermCriteria(TermCriteria(TermCriteria::MAX_ITER, 1e3, 1e-6));
     Ptr<ml::TrainData> td = ml::TrainData::create(X, ml::ROW_SAMPLE, Y);
-//    svm->train(td);
-    ml::ParamGrid gridC(1e-5,50,5);
+    svm->train(td);
+//    ml::ParamGrid gridC(0.1,1.6,2);
 //    ml::ParamGrid gridGamma(1e-5,100,5);
-    svm->trainAuto(td, 5, gridC);
-    cout<<to_string(svm->getC())<<endl;
+//    svm->trainAuto(td, 10, gridC);
+//    cout<<to_string(svm->getC())<<endl;
 //    cout<<to_string(svm->getGamma())<<endl;
-    svm->save("svm.yml");
+//    cout<<to_string(svm->getP())<<endl;
+//    cout<<to_string(svm->getNu())<<endl;
+//    cout<<to_string(svm->getCoef0())<<endl;
+//    cout<<to_string(svm->getDegree())<<endl;
+
+    if (save){
+        svm->save("svm.yml");
+    }
     return svm;
+}
+
+Ptr<ml::KNearest> trainKNN(Mat X, Mat Y){
+    Ptr<ml::KNearest> knn = ml::KNearest::create();
+    knn->train(X, ml::ROW_SAMPLE, Y);
+    return knn;
 }
 
 // evaluates the prediction
@@ -263,6 +287,12 @@ void predictSVM(Ptr<ml::SVM> model, Mat X, Mat Y) {
     cout << "Accuracy = " << evaluate(predicted, Y) << endl;
 }
 
+void predictKNN(Ptr<ml::KNearest> model, Mat X, Mat Y) {
+    Mat predicted(Y.rows, 1, CV_32F);
+    model->findNearest(X, 6, predicted);
+    cout << "Accuracy = " << evaluate(predicted, Y) << endl;
+}
+
 // calculates the elapsed time
 string elapsed_time(std::chrono::steady_clock::time_point start_time, std::chrono::steady_clock::time_point end_time) {
     float elapsed = (std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count()) / 1000000.0;
@@ -282,8 +312,10 @@ void classify(Ptr<ml::SVM> model, Mat sample) {
 }
 
 Ptr<ml::SVM> get_model(bool train) {
+//Ptr<ml::KNearest> get_model(bool train) {
 
     Ptr<ml::SVM> model;
+//    Ptr<ml::KNearest> model;
     int n_classes = 10;
     float split = 0.8;
     int n_threads = 8;
@@ -300,9 +332,7 @@ Ptr<ml::SVM> get_model(bool train) {
         start_time = std::chrono::steady_clock::now();
         read_data(path_data, trainX, testX, trainY, testY, n_classes, split, n_threads);
         cout<<trainX.size()<<endl;
-    //    cout<<trainY.size()<<endl;
         cout<<testX.size()<<endl;
-    //    cout<<testY.size()<<endl;
         end_time = std::chrono::steady_clock::now();
 
         cout << "Reading completed in " << elapsed_time(start_time, end_time) << endl;
@@ -312,6 +342,7 @@ Ptr<ml::SVM> get_model(bool train) {
         cout << "\nStart training:\n";
         start_time = std::chrono::steady_clock::now();
         model = trainSVM(trainX, trainY);
+//        model = trainKNN(trainX, trainY);
         end_time = std::chrono::steady_clock::now();
         cout << "Training completed in " << elapsed_time(start_time, end_time) << endl;
 
@@ -320,8 +351,21 @@ Ptr<ml::SVM> get_model(bool train) {
         cout << "\nStart predicting:\n";
         start_time = std::chrono::steady_clock::now();
         predictSVM(model, testX, testY);
+//        predictKNN(model, testX, testY);
         end_time = std::chrono::steady_clock::now();
         cout << "Predicting completed in " << elapsed_time(start_time, end_time) << endl;
+
+
+        // Training and saving final model
+        cout << "\nStart training and saving final model:\n";
+        start_time = std::chrono::steady_clock::now();
+        Mat completeX, completeY;
+        vconcat(trainX, testX, completeX);
+        vconcat(trainY, testY, completeY);
+        model = trainSVM(completeX, completeY, true);
+//        model = trainKNN(trainX, trainY);
+        end_time = std::chrono::steady_clock::now();
+        cout << "Training and saving final model completed in " << elapsed_time(start_time, end_time) << endl;
     }
     else {
         model = ml::StatModel::load<ml::SVM>("svm.yml");
@@ -365,15 +409,16 @@ int main()
 
 	int key;
 	bool execute = true;
-	bool train = true;
+	bool train = false;
     drawing = false;
-    new_size = 32;
+    new_size = 16;
 	radius = 6;
 	last_x=last_y=0;
 	imagen= Mat(Size(128,128),CV_8U, 255);
 	screenBuffer=imagen.clone();
 
 	Ptr<ml::SVM> model = get_model(train);
+//	Ptr<ml::KNearest> model = get_model(train);
 
 	namedWindow("Drawing Window", CV_WINDOW_FREERATIO);
 	setMouseCallback("Drawing Window", &on_mouse);
@@ -388,25 +433,25 @@ int main()
                 execute = false;
                 break;
             case '+':
-            case 'a':
+            case 'w':
                 radius++;
                 draw_cursor(last_x, last_y);
                 break;
             case '-':
-            case 's':
+            case 'q':
                 if (radius>1) {
                     radius--;
             		draw_cursor(last_x, last_y);
                 }
                 break;
-            case 'r':
+            case 'e':
                 imagen = 255;
                 draw_cursor(last_x, last_y);
                 break;
             case 't':
                 imwrite("output.png", imagen);
                 break;
-            case 'e':
+            case 'r':
                 classify(model, imagen);
                 break;
         }
