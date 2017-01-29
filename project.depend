@@ -1,5 +1,5 @@
 # depslib dependency file v1.0
-1485649323 source:c:\sirtime\dmkm\3\idm\dmkm2016\project\chars64k\main01.cpp
+1485688705 source:c:\sirtime\dmkm\3\idm\dmkm2016\project\chars64k\main01.cpp
 	"opencv2/core/core.hpp"
 	"opencv2/imgproc/imgproc.hpp"
 	"opencv2/imgcodecs.hpp"
@@ -11,7 +11,6 @@
 	<chrono>
 	<sys/types.h>
 	<dirent.h>
-	<numeric>
 
 1387500148 c:\lib\opencv\build\include\\opencv2\core\core.hpp
 	"opencv2/core.hpp"

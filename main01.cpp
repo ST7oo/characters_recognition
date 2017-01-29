@@ -1,4 +1,7 @@
-
+/*
+Characters Recognition
+- Rodney Ledesma
+*/
 
 #include "opencv2/core/core.hpp"
 #include "opencv2/imgproc/imgproc.hpp"
@@ -11,20 +14,24 @@
 #include <chrono>
 #include <sys/types.h>
 #include <dirent.h>
-#include <numeric>
 
 using namespace cv;
 using namespace std;
 
-// Global variables
-Mat imagen, screenBuffer;
+
+// Global Variables
+
+Mat drawing_image, screen_buffer;
 int radius, last_x, last_y, new_size, n_classes;
 bool drawing, fnt, hnd, img;
 const int NUMBERS = 0;
 const int UPPERS = 10;
 const int LOWERS = 36;
-int from_class = UPPERS;
+int from_class = UPPERS; // which kind of characters
 
+
+
+// Auxiliary Functions
 
 // return a string with zeros before the number
 string fill_zeros(int num, int num_zeros)
@@ -39,15 +46,59 @@ string fill_zeros(int num, int num_zeros)
 	return ret;
 }
 
+// get the label string
+string get_label(int n) {
+    char letters[] = "abcdefghijklmnopqrstuvwxyz";
+    if (from_class == NUMBERS) {
+        return to_string(n);
+    }
+    else if (from_class == UPPERS) {
+        return string(1, toupper(letters[n]));
+    }
+    else {
+        return string(1, letters[n]);
+    }
+}
+
+// calculate the elapsed time
+string elapsed_time(std::chrono::steady_clock::time_point start_time, std::chrono::steady_clock::time_point end_time) {
+    float elapsed = (std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count()) / 1000000.0;
+    if (elapsed > 60) {
+        elapsed /= 60;
+        return to_string(elapsed) + " min";
+    } else {
+        return to_string(elapsed) + " sec";
+    }
+}
+
+// print help
+void help(){
+    cout<<"Use the mouse to draw a character"<<endl;
+    cout<<"Press 'r' to classify"<<endl;
+    cout<<"Press 'e' to reset"<<endl;
+    cout<<"Press '+' to increase the radius"<<endl;
+    cout<<"Press '-' to decrease the radius"<<endl;
+    cout<<"Press 't' to save the current image"<<endl;
+    cout<<"Press 'ESC' to quit"<<endl;
+    cout<<"-----------------------------------"<<endl<<endl;
+}
+
+
+
+// Reading and Processing Functions
+
 // preprocess image
 void preprocess(Mat image, Mat &row_data, int c=0) {
     Mat binary, resized, result, vect;
     int black_dots = 0;
 
+    // binary image
     threshold(image, binary, 0, 255, THRESH_BINARY | THRESH_OTSU);
 
+    // resize image
     resize(binary, resized, Size(new_size,new_size), 0, 0, INTER_NEAREST);
 
+    // count black pixels on frame
     for(int i=0; i<new_size; i++){
         if(resized.at<uchar>(0,i) == 0){
             black_dots++;
@@ -78,6 +129,8 @@ void preprocess(Mat image, Mat &row_data, int c=0) {
             black_dots++;
         }
     }
+
+    // invert the image if background is dark
     if (black_dots > ((new_size*8)-12)/2.5){
         threshold(resized, result, 140, 255, THRESH_BINARY_INV);
     }
@@ -86,11 +139,11 @@ void preprocess(Mat image, Mat &row_data, int c=0) {
     }
 
     result.convertTo(vect, CV_32F);
-    row_data = vect.reshape(1,1);
+    row_data = vect.reshape(1,1); // one-hot-vector
     divide(row_data, 255, row_data);
 }
 
-// read a folder
+// read images of a folder
 int read_folder(string folder, vector<Mat> &data) {
     string name;
     Mat image, row_data;
@@ -137,8 +190,8 @@ void load_and_preprocess(string path, int n_folder, vector<Mat> &data, int &num_
     num_samples = c;
 }
 
-// read data and stores in trainX, trainY, testX, testY
-void read_data(string path, Mat &trainX, Mat &testX, Mat &trainY, Mat &testY, float split, int n_threads = 8){
+// read data and store in trainX, trainY, testX, testY
+void read_data(string path, Mat &trainX, Mat &testX, Mat &trainY, Mat &testY, float split, int n_threads){
     int train_samples, test_samples;
     vector<thread> threads(n_threads);
     vector<vector<Mat>> data(n_classes, vector<Mat>());
@@ -184,11 +237,16 @@ void read_data(string path, Mat &trainX, Mat &testX, Mat &trainY, Mat &testY, fl
         cout<<num_samples[i] - (int)round(num_samples[i]*split)<<", ";
     }
     cout<<"= "<<testData.rows<<endl;
+
     trainX = trainData;
     trainY = trainClasses;
     testX = testData;
     testY = testClasses;
 }
+
+
+
+// Machine Learning Functions
 
 // train the SVM model
 Ptr<ml::SVM> trainSVM(Mat X, Mat Y, bool save=false) {
@@ -197,7 +255,7 @@ Ptr<ml::SVM> trainSVM(Mat X, Mat Y, bool save=false) {
     svm->setType(ml::SVM::C_SVC);
     svm->setKernel(ml::SVM::LINEAR);
     svm->setC(0.1);
-    svm->setTermCriteria(TermCriteria(TermCriteria::MAX_ITER, 1e3, 1e-6));
+    svm->setTermCriteria(TermCriteria(TermCriteria::MAX_ITER, 1e5, 1e-6));
     Ptr<ml::TrainData> td = ml::TrainData::create(X, ml::ROW_SAMPLE, Y);
     svm->train(td);
 
@@ -224,36 +282,12 @@ float evaluate(cv::Mat& predicted, cv::Mat& actual) {
     return (t * 1.0) / (t + f);
 }
 
-// get the label string
-string get_label(int n) {
-    char letters[] = "abcdefghijklmnopqrstuvwxyz";
-    if (from_class == NUMBERS) {
-        return to_string(n);
-    }
-    else if (from_class == UPPERS) {
-        return string(1, toupper(letters[n]));
-    }
-    else {
-        return string(1, letters[n]);
-    }
-}
 
 // predict with the model
 void predictSVM(Ptr<ml::SVM> model, Mat X, Mat Y) {
     Mat predicted(Y.rows, 1, CV_32F);
     model->predict(X, predicted);
     cout << "Accuracy = " << evaluate(predicted, Y) << endl;
-}
-
-// calculate the elapsed time
-string elapsed_time(std::chrono::steady_clock::time_point start_time, std::chrono::steady_clock::time_point end_time) {
-    float elapsed = (std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count()) / 1000000.0;
-    if (elapsed > 60) {
-        elapsed /= 60;
-        return to_string(elapsed) + " min";
-    } else {
-        return to_string(elapsed) + " sec";
-    }
 }
 
 // classify one sample
@@ -320,20 +354,24 @@ Ptr<ml::SVM> get_model() {
     return model;
 }
 
+
+
+// Drawing Window Functions
+
 // draw a circle where the cursor is
 void draw_cursor(int x, int y){
-	screenBuffer=imagen.clone();
-	circle(screenBuffer, Point(x,y), radius, CV_RGB(0,0,0), -1, CV_AA);
+	screen_buffer = drawing_image.clone();
+	circle(screen_buffer, Point(x,y), radius, CV_RGB(0,0,0), -1, CV_AA);
 }
 
 // draw a circle in the drawing window
 void draw(int x,int y){
-	circle(imagen, Point(x,y), radius, CV_RGB(0,0,0), -1, CV_AA);
-	screenBuffer = imagen.clone();
-	imshow("Drawing Window", screenBuffer);
+	circle(drawing_image, Point(x,y), radius, CV_RGB(0,0,0), -1, CV_AA);
+	screen_buffer = drawing_image.clone();
+	imshow("Drawing Window", screen_buffer);
 }
 
-// on mouse events
+// mouse events
 void on_mouse(int event, int x, int y, int flags, void* param) {
 	last_x=x;
 	last_y=y;
@@ -352,23 +390,14 @@ void on_mouse(int event, int x, int y, int flags, void* param) {
     }
 }
 
-// help
-void help(){
-    cout<<"Use the mouse to draw a character"<<endl;
-    cout<<"Press 'r' to classify"<<endl;
-    cout<<"Press 'e' to reset"<<endl;
-    cout<<"Press '+' to increase the radius"<<endl;
-    cout<<"Press '-' to decrease the radius"<<endl;
-    cout<<"Press 't' to save the current image"<<endl;
-    cout<<"Press 'ESC' to quit"<<endl;
-    cout<<"-----------------------------------"<<endl<<endl;
-}
 
-// main
-int main()
+
+// Main
+
+int main(int argc, char** argv)
 {
-    // configurable variables
-    string path_data = "data/"; // relative path to images
+    // configurable variables when training
+    string path_data = "data/"; // relative path to folder of images
     new_size = 64; // size to resize
     n_classes = 10; // number of classes
     float split = 0.8; // percentage to split in training and testing
@@ -379,19 +408,32 @@ int main()
 
     // private variables
 	int key;
-	bool execute = true;
+	bool execute = true, train = false;
+	string arg1 = "";
+	Ptr<ml::SVM> model;
     drawing = false;
 	radius = 7;
 	last_x=last_y=0;
-	imagen= Mat(Size(128,128),CV_8U, 255);
-	screenBuffer=imagen.clone();
+	drawing_image = Mat(Size(128,128),CV_8U, 255);
+	screen_buffer = drawing_image.clone();
+
 
     cout << "Character Recognition\n\n";
 
-    // train the model
-//	Ptr<ml::SVM> model = get_model(path_data, split, n_threads);
-    // load the model
-    Ptr<ml::SVM> model = get_model();
+    if(argc > 1){
+        arg1 = argv[1];
+    }
+    if(arg1 == "-train"){
+        train = true;
+    }
+
+    if(train){
+        model = get_model(path_data, split, n_threads); // train the model
+    }
+    else {
+        model = get_model(); // load the model
+    }
+
 
     // drawing window
 	namedWindow("Drawing Window", CV_WINDOW_FREERATIO);
@@ -401,7 +443,7 @@ int main()
 
     while(execute){
 
-        imshow("Drawing Window", screenBuffer);
+        imshow("Drawing Window", screen_buffer);
         key = waitKey(10);
 
         switch ((char)key){
@@ -421,14 +463,14 @@ int main()
                 }
                 break;
             case 'e': // reset the canvas
-                imagen = 255;
+                drawing_image = 255;
                 draw_cursor(last_x, last_y);
                 break;
             case 't': // save the image
-                imwrite("output.png", imagen);
+                imwrite("output.png", drawing_image);
                 break;
             case 'r': // classify
-                classify(model, imagen);
+                classify(model, drawing_image);
                 break;
         }
     }
